@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 const ExpressError = require('../expressError');
+const slugify = require('slugify');
 
 router.get('/', async (req, res) => {
     try {
@@ -17,14 +18,21 @@ router.get('/', async (req, res) => {
 router.get('/:code', async (req, res, next) => {
     try{
         const { code } = req.params;
-        const results = await db.query(`SELECT * FROM companies WHERE code=$1`, [code]);
+        const results = await db.query(`SELECT c.name, c.description, i.industry 
+                                        FROM companies AS c 
+                                        LEFT JOIN companies_industries AS ci 
+                                        ON c.code = ci.comp_code 
+                                        LEFT JOIN industries AS i 
+                                        ON ci.ind_id = i.id
+                                        WHERE c.code = $1;`, [code]);
         if(results.rows.length === 0) {
             throw new ExpressError(`Can't find company with code of ${code}`, 404);
         }
         const invoices = await db.query(`SELECT * FROM invoices WHERE comp_code=$1`, [code]);
         const company = results.rows;
+        const industries = results.rows.map(r => r.industry)
         company.invoices = invoices.rows;
-        return res.json({company, invoices: [company.invoices]})
+        return res.json({company, invoices: [company.invoices], industries})
     }catch(e){
         return next(e);
     }
@@ -32,7 +40,8 @@ router.get('/:code', async (req, res, next) => {
 
 router.post('/', async (req, res, next) => {
     try{
-        const { code, name, description } = req.body;
+        const { name, description } = req.body;
+        const code = slugify(name)
         const results = await db.query(`INSERT INTO companies (code, name, description) VALUES ($1, $2, $3) 
         RETURNING *`, [code, name, description]);
         return res.status(201).json({company: results.rows})
@@ -65,6 +74,17 @@ router.delete('/:code', async (req, res, next) => {
         }
         const results = await db.query(`DELETE FROM companies WHERE code=$1`, [code]);
         return res.json({status: "Deleted."})
+    }catch(e){
+        return next(e);
+    }
+})
+
+router.post('/industries', async () => {
+    try{
+        const { comp_code, ind_id } = req.body;
+        const result = db.query(`INSERT INTO companies_industries (comp_code, ind_id) VALUES ($1, $2)`,
+            [comp_code, ind_id]);
+        return res.json({added_industry: result.rows})
     }catch(e){
         return next(e);
     }
